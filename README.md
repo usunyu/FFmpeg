@@ -36,6 +36,21 @@ and in the [wiki](https://trac.ffmpeg.org).
 
 Coding examples are available in the **doc/examples** directory.
 
+## Facebook Transform Integration
+
+Install [Yasm](http://yasm.tortall.net/Download.html) with
+```
+./configure --enable-python; make && sudo make install
+```
+
+[Facebook Transform](https://github.com/facebook/transform)
+
+[Configure, Compile and Install](https://trac.ffmpeg.org/wiki/CompilationGuide/MacOSX)
+```
+./configure --enable-filter=TRANSFORM
+make && sudo make install
+```
+
 ## License
 
 FFmpeg codebase is mainly LGPL-licensed with optional components licensed under
