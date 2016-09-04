@@ -168,6 +168,8 @@ typedef struct MatroskaTrackVideo {
     uint64_t pixel_width;
     uint64_t pixel_height;
     EbmlBin color_space;
+    uint64_t interlaced;
+    uint64_t field_order;
     uint64_t stereo_mode;
     uint64_t alpha_mode;
     MatroskaTrackVideoColor color;
@@ -217,6 +219,7 @@ typedef struct MatroskaTrack {
     MatroskaTrackOperation operation;
     EbmlList encodings;
     uint64_t codec_delay;
+    uint64_t codec_delay_in_track_tb;
 
     AVStream *stream;
     int64_t end_timecode;
@@ -434,7 +437,8 @@ static const EbmlSyntax matroska_track_video[] = {
     { MATROSKA_ID_VIDEOPIXELCROPL,     EBML_NONE },
     { MATROSKA_ID_VIDEOPIXELCROPR,     EBML_NONE },
     { MATROSKA_ID_VIDEODISPLAYUNIT,    EBML_NONE },
-    { MATROSKA_ID_VIDEOFLAGINTERLACED, EBML_NONE },
+    { MATROSKA_ID_VIDEOFLAGINTERLACED, EBML_UINT,  0, offsetof(MatroskaTrackVideo, interlaced),  { .u = MATROSKA_VIDEO_INTERLACE_FLAG_UNDETERMINED } },
+    { MATROSKA_ID_VIDEOFIELDORDER,     EBML_UINT,  0, offsetof(MatroskaTrackVideo, field_order), { .u = MATROSKA_VIDEO_FIELDORDER_UNDETERMINED } },
     { MATROSKA_ID_VIDEOSTEREOMODE,     EBML_UINT,  0, offsetof(MatroskaTrackVideo, stereo_mode), { .u = MATROSKA_VIDEO_STEREOMODE_TYPE_NB } },
     { MATROSKA_ID_VIDEOASPECTRATIO,    EBML_NONE },
     { 0 }
@@ -728,6 +732,8 @@ static const EbmlSyntax matroska_clusters_incremental[] = {
 };
 
 static const char *const matroska_doctypes[] = { "matroska", "webm" };
+
+static int matroska_read_close(AVFormatContext *s);
 
 static int matroska_resync(MatroskaDemuxContext *matroska, int64_t last_pos)
 {
@@ -1685,13 +1691,8 @@ static int matroska_aac_sri(int samplerate)
 
 static void matroska_metadata_creation_time(AVDictionary **metadata, int64_t date_utc)
 {
-    char buffer[32];
     /* Convert to seconds and adjust by number of seconds between 2001-01-01 and Epoch */
-    time_t creation_time = date_utc / 1000000000 + 978307200;
-    struct tm tmpbuf, *ptm = gmtime_r(&creation_time, &tmpbuf);
-    if (!ptm) return;
-    if (strftime(buffer, sizeof(buffer), "%Y-%m-%d %H:%M:%S", ptm))
-        av_dict_set(metadata, "creation_time", buffer, 0);
+    avpriv_dict_set_timestamp(metadata, "creation_time", date_utc / 1000 + 978307200000000LL);
 }
 
 static int matroska_parse_flac(AVFormatContext *s,
@@ -1749,7 +1750,28 @@ static int matroska_parse_flac(AVFormatContext *s,
     return 0;
 }
 
-static void mkv_stereo_mode_display_mul(int stereo_mode, int *h_width, int *h_height)
+static int mkv_field_order(int64_t field_order)
+{
+    switch (field_order) {
+    case MATROSKA_VIDEO_FIELDORDER_PROGRESSIVE:
+        return AV_FIELD_PROGRESSIVE;
+    case MATROSKA_VIDEO_FIELDORDER_UNDETERMINED:
+        return AV_FIELD_UNKNOWN;
+    case MATROSKA_VIDEO_FIELDORDER_TT:
+        return AV_FIELD_TT;
+    case MATROSKA_VIDEO_FIELDORDER_BB:
+        return AV_FIELD_BB;
+    case MATROSKA_VIDEO_FIELDORDER_BT:
+        return AV_FIELD_BT;
+    case MATROSKA_VIDEO_FIELDORDER_TB:
+        return AV_FIELD_TB;
+    default:
+        return AV_FIELD_UNKNOWN;
+    }
+}
+
+static void mkv_stereo_mode_display_mul(int stereo_mode,
+                                        int *h_width, int *h_height)
 {
     switch (stereo_mode) {
         case MATROSKA_VIDEO_STEREOMODE_TYPE_MONO:
@@ -2215,7 +2237,7 @@ static int matroska_parse_tracks(AVFormatContext *s)
                             1000 * 1000 * 1000);    /* 64 bit pts in ns */
 
         /* convert the delay from ns to the track timebase */
-        track->codec_delay = av_rescale_q(track->codec_delay,
+        track->codec_delay_in_track_tb = av_rescale_q(track->codec_delay,
                                           (AVRational){ 1, 1000000000 },
                                           st->time_base);
 
@@ -2254,6 +2276,9 @@ static int matroska_parse_tracks(AVFormatContext *s)
                 st->codecpar->bits_per_coded_sample = bit_depth;
             st->codecpar->width      = track->video.pixel_width;
             st->codecpar->height     = track->video.pixel_height;
+
+            if (track->video.interlaced == MATROSKA_VIDEO_INTERLACE_FLAG_INTERLACED)
+                st->codecpar->field_order = mkv_field_order(track->video.field_order);
 
             if (track->video.stereo_mode && track->video.stereo_mode < MATROSKA_VIDEO_STEREOMODE_TYPE_NB)
                 mkv_stereo_mode_display_mul(track->video.stereo_mode, &display_width_mul, &display_height_mul);
@@ -2324,8 +2349,9 @@ static int matroska_parse_tracks(AVFormatContext *s)
                 st->need_parsing = AVSTREAM_PARSE_HEADERS;
             if (track->codec_delay > 0) {
                 st->codecpar->initial_padding = av_rescale_q(track->codec_delay,
-                                                             st->time_base,
-                                                             (AVRational){1, st->codecpar->sample_rate});
+                                                             (AVRational){1, 1000000000},
+                                                             (AVRational){1, st->codecpar->codec_id == AV_CODEC_ID_OPUS ?
+                                                                             48000 : st->codecpar->sample_rate});
             }
             if (track->seek_preroll > 0) {
                 st->codecpar->seek_preroll = av_rescale_q(track->seek_preroll,
@@ -2408,7 +2434,7 @@ static int matroska_read_header(AVFormatContext *s)
     while (res != 1) {
         res = matroska_resync(matroska, pos);
         if (res < 0)
-            return res;
+            goto fail;
         pos = avio_tell(matroska->ctx->pb);
         res = ebml_parse(matroska, matroska_segment, matroska);
     }
@@ -2427,7 +2453,7 @@ static int matroska_read_header(AVFormatContext *s)
 
     res = matroska_parse_tracks(s);
     if (res < 0)
-        return res;
+        goto fail;
 
     attachments = attachments_list->elem;
     for (j = 0; j < attachments_list->nb_elem; j++) {
@@ -2501,6 +2527,9 @@ static int matroska_read_header(AVFormatContext *s)
     matroska_convert_tags(s);
 
     return 0;
+fail:
+    matroska_read_close(s);
+    return res;
 }
 
 /*
@@ -3105,7 +3134,7 @@ static int matroska_parse_block(MatroskaDemuxContext *matroska, uint8_t *data,
 
     if (cluster_time != (uint64_t) -1 &&
         (block_time >= 0 || cluster_time >= -block_time)) {
-        timecode = cluster_time + block_time - track->codec_delay;
+        timecode = cluster_time + block_time - track->codec_delay_in_track_tb;
         if (track->type == MATROSKA_TRACK_TYPE_SUBTITLE &&
             timecode < track->end_timecode)
             is_keyframe = 0;  /* overlapping subtitles are not key frame */
@@ -3116,7 +3145,10 @@ static int matroska_parse_block(MatroskaDemuxContext *matroska, uint8_t *data,
 
     if (matroska->skip_to_keyframe &&
         track->type != MATROSKA_TRACK_TYPE_SUBTITLE) {
-        if (timecode < matroska->skip_to_timecode)
+        // Compare signed timecodes. Timecode may be negative due to codec delay
+        // offset. We don't support timestamps greater than int64_t anyway - see
+        // AVPacket's pts.
+        if ((int64_t)timecode < (int64_t)matroska->skip_to_timecode)
             return res;
         if (is_keyframe)
             matroska->skip_to_keyframe = 0;

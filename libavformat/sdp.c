@@ -261,7 +261,7 @@ static char *extradata2psets_hevc(AVCodecParameters *par)
             goto err;
         nalu_type = extradata[pos] & 0x3f;
         // Not including libavcodec/hevc.h to avoid confusion between
-        // NAL_* with the same name for both H264 and HEVC.
+        // NAL_* with the same name for both H.264 and HEVC.
         if (nalu_type == 32) // VPS
             ps_pos[0] = pos;
         else if (nalu_type == 33) // SPS
@@ -485,6 +485,9 @@ static char *sdp_write_media_attributes(char *buff, int size, AVStream *st, int 
     AVCodecParameters *p = st->codecpar;
 
     switch (p->codec_id) {
+        case AV_CODEC_ID_DIRAC:
+            av_strlcatf(buff, size, "a=rtpmap:%d VC2/90000\r\n", payload_type);
+            break;
         case AV_CODEC_ID_H264: {
             int mode = 1;
             if (fmt && fmt->oformat && fmt->oformat->priv_class &&
@@ -638,7 +641,7 @@ static char *sdp_write_media_attributes(char *buff, int size, AVStream *st, int 
             if (p->extradata_size)
                 config = xiph_extradata2config(fmt, p);
             else
-                av_log(fmt, AV_LOG_ERROR, "Theora configuation info missing\n");
+                av_log(fmt, AV_LOG_ERROR, "Theora configuration info missing\n");
             if (!config)
                 return NULL;
 
@@ -652,6 +655,10 @@ static char *sdp_write_media_attributes(char *buff, int size, AVStream *st, int 
         }
         case AV_CODEC_ID_VP8:
             av_strlcatf(buff, size, "a=rtpmap:%d VP8/90000\r\n",
+                                     payload_type);
+            break;
+        case AV_CODEC_ID_VP9:
+            av_strlcatf(buff, size, "a=rtpmap:%d VP9/90000\r\n",
                                      payload_type);
             break;
         case AV_CODEC_ID_MJPEG:

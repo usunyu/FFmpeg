@@ -36,7 +36,7 @@
 #include "wtv.h"
 #include "mpegts.h"
 
-/* Macros for formating GUIDs */
+/* Macros for formatting GUIDs */
 #define PRI_PRETTY_GUID \
     "%08"PRIx32"-%04"PRIx16"-%04"PRIx16"-%02x%02x%02x%02x%02x%02x%02x%02x"
 #define ARG_PRETTY_GUID(g) \
@@ -320,7 +320,7 @@ typedef struct WtvContext {
     AVIOContext *pb;       /**< timeline file */
     int64_t epoch;
     int64_t pts;             /**< pts for next data chunk */
-    int64_t last_valid_pts;  /**< latest valid pts, used for interative seeking */
+    int64_t last_valid_pts;  /**< latest valid pts, used for interactive seeking */
 
     /* maintain private seek index, as the AVIndexEntry->pos is relative to the
        start of the 'timeline' file, not the file system (AVFormatContext->pb) */
@@ -1031,7 +1031,7 @@ static int read_header(AVFormatContext *s)
                     while (1) {
                         uint64_t frame_nb = avio_rl64(pb);
                         uint64_t position = avio_rl64(pb);
-                        while (frame_nb > e->size && e <= e_end) {
+                        while (e <= e_end && frame_nb > e->size) {
                             e->pos = last_position;
                             e++;
                         }

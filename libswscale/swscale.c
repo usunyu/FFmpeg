@@ -413,8 +413,6 @@ static int swscale(SwsContext *c, const uint8_t *src[],
 
             lastInChrBuf = firstChrSrcY - 1;
         }
-        av_assert0(firstLumSrcY >= lastInLumBuf - vLumFilterSize + 1);
-        av_assert0(firstChrSrcY >= lastInChrBuf - vChrFilterSize + 1);
 
         DEBUG_BUFFERS("dstY: %d\n", dstY);
         DEBUG_BUFFERS("\tfirstLumSrcY: %d lastLumSrcY: %d lastInLumBuf: %d\n",
@@ -433,10 +431,14 @@ static int swscale(SwsContext *c, const uint8_t *src[],
                           lastLumSrcY, lastChrSrcY);
         }
 
+        av_assert0((lastLumSrcY - firstLumSrcY + 1) <= hout_slice->plane[0].available_lines);
+        av_assert0((lastChrSrcY - firstChrSrcY + 1) <= hout_slice->plane[1].available_lines);
+
+
         posY = hout_slice->plane[0].sliceY + hout_slice->plane[0].sliceH;
         if (posY <= lastLumSrcY && !hasLumHoles) {
             firstPosY = FFMAX(firstLumSrcY, posY);
-            lastPosY = FFMIN(lastLumSrcY + MAX_LINES_AHEAD, srcSliceY + srcSliceH - 1);
+            lastPosY = FFMIN(firstLumSrcY + hout_slice->plane[0].available_lines - 1, srcSliceY + srcSliceH - 1);
         } else {
             firstPosY = lastInLumBuf + 1;
             lastPosY = lastLumSrcY;
@@ -445,7 +447,7 @@ static int swscale(SwsContext *c, const uint8_t *src[],
         cPosY = hout_slice->plane[1].sliceY + hout_slice->plane[1].sliceH;
         if (cPosY <= lastChrSrcY && !hasChrHoles) {
             firstCPosY = FFMAX(firstChrSrcY, cPosY);
-            lastCPosY = FFMIN(lastChrSrcY + MAX_LINES_AHEAD, AV_CEIL_RSHIFT(srcSliceY + srcSliceH, c->chrSrcVSubSample) - 1);
+            lastCPosY = FFMIN(firstChrSrcY + hout_slice->plane[1].available_lines - 1, AV_CEIL_RSHIFT(srcSliceY + srcSliceH, c->chrSrcVSubSample) - 1);
         } else {
             firstCPosY = lastInChrBuf + 1;
             lastCPosY = lastChrSrcY;
@@ -759,6 +761,12 @@ int attribute_align_arg sws_scale(struct SwsContext *c,
     uint8_t *dst2[4];
     uint8_t *rgb0_tmp = NULL;
     int macro_height = isBayer(c->srcFormat) ? 2 : (1 << c->chrSrcVSubSample);
+    // copy strides, so they can safely be modified
+    int srcStride2[4] = { srcStride[0], srcStride[1], srcStride[2],
+                            srcStride[3] };
+    int dstStride2[4] = { dstStride[0], dstStride[1], dstStride[2],
+                            dstStride[3] };
+    int srcSliceY_internal = srcSliceY;
 
     if (!srcStride || !dstStride || !dst || !srcSlice) {
         av_log(c, AV_LOG_ERROR, "One of the input parameters to sws_scale() is NULL, please check the calling code\n");
@@ -941,30 +949,12 @@ int attribute_align_arg sws_scale(struct SwsContext *c,
         for (i = 0; i < 4; i++)
             memset(c->dither_error[i], 0, sizeof(c->dither_error[0][0]) * (c->dstW+2));
 
-
-    // copy strides, so they can safely be modified
-    if (c->sliceDir == 1) {
-        // slices go from top to bottom
-        int srcStride2[4] = { srcStride[0], srcStride[1], srcStride[2],
-                              srcStride[3] };
-        int dstStride2[4] = { dstStride[0], dstStride[1], dstStride[2],
-                              dstStride[3] };
-
-        reset_ptr(src2, c->srcFormat);
-        reset_ptr((void*)dst2, c->dstFormat);
-
-        /* reset slice direction at end of frame */
-        if (srcSliceY + srcSliceH == c->srcH)
-            c->sliceDir = 0;
-
-        ret = c->swscale(c, src2, srcStride2, srcSliceY, srcSliceH, dst2,
-                          dstStride2);
-    } else {
+    if (c->sliceDir != 1) {
         // slices go from bottom to top => we flip the image internally
-        int srcStride2[4] = { -srcStride[0], -srcStride[1], -srcStride[2],
-                              -srcStride[3] };
-        int dstStride2[4] = { -dstStride[0], -dstStride[1], -dstStride[2],
-                              -dstStride[3] };
+        for (i=0; i<4; i++) {
+            srcStride2[i] *= -1;
+            dstStride2[i] *= -1;
+        }
 
         src2[0] += (srcSliceH - 1) * srcStride[0];
         if (!usePal(c->srcFormat))
@@ -976,21 +966,26 @@ int attribute_align_arg sws_scale(struct SwsContext *c,
         dst2[2] += ((c->dstH >> c->chrDstVSubSample) - 1) * dstStride[2];
         dst2[3] += ( c->dstH                         - 1) * dstStride[3];
 
-        reset_ptr(src2, c->srcFormat);
-        reset_ptr((void*)dst2, c->dstFormat);
-
-        /* reset slice direction at end of frame */
-        if (!srcSliceY)
-            c->sliceDir = 0;
-
-        ret = c->swscale(c, src2, srcStride2, c->srcH-srcSliceY-srcSliceH,
-                          srcSliceH, dst2, dstStride2);
+        srcSliceY_internal = c->srcH-srcSliceY-srcSliceH;
     }
+    reset_ptr(src2, c->srcFormat);
+    reset_ptr((void*)dst2, c->dstFormat);
+
+    /* reset slice direction at end of frame */
+    if (srcSliceY_internal + srcSliceH == c->srcH)
+        c->sliceDir = 0;
+    ret = c->swscale(c, src2, srcStride2, srcSliceY_internal, srcSliceH, dst2, dstStride2);
 
 
     if (c->dstXYZ && !(c->srcXYZ && c->srcW==c->dstW && c->srcH==c->dstH)) {
+        int dstY = c->dstY ? c->dstY : srcSliceY + srcSliceH;
+        av_assert0(dstY >= ret);
+        av_assert0(ret >= 0);
+        av_assert0(c->dstH >= dstY);
+
+        uint16_t *dst16 = (uint16_t*)(dst2[0] + (dstY - ret) * dstStride2[0]);
         /* replace on the same data */
-        rgb48Toxyz12(c, (uint16_t*)dst2[0], (const uint16_t*)dst2[0], dstStride[0]/2, ret);
+        rgb48Toxyz12(c, dst16, dst16, dstStride2[0]/2, ret);
     }
 
     av_free(rgb0_tmp);

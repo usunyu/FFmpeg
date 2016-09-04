@@ -357,8 +357,15 @@ segmentation.
 This muxer supports the following options:
 
 @table @option
+@item hls_init_time @var{seconds}
+Set the initial target segment length in seconds. Default value is @var{0}.
+Segment will be cut on the next key frame after this time has passed on the first m3u8 list.
+After the initial playlist is filled @command{ffmpeg} will cut segments
+at duration equal to @code{hls_time}
+
 @item hls_time @var{seconds}
-Set the segment length in seconds. Default value is 2.
+Set the target segment length in seconds. Default value is 2.
+Segment will be cut on the next key frame after this time has passed.
 
 @item hls_list_size @var{size}
 Set the maximum number of playlist entries. If set to 0 the list file
@@ -395,8 +402,8 @@ which can be cyclic, for example if the @option{wrap} option is
 specified.
 
 @item hls_segment_filename @var{filename}
-Set the segment filename. Unless hls_flags single_file is set @var{filename}
-is used as a string format with the segment number:
+Set the segment filename. Unless @code{hls_flags single_file} is set,
+@var{filename} is used as a string format with the segment number:
 @example
 ffmpeg in.nut -hls_segment_filename 'file%03d.ts' out.m3u8
 @end example
@@ -494,6 +501,27 @@ Will produce the playlist, @file{out.m3u8}, and a single segment file,
 Segment files removed from the playlist are deleted after a period of time
 equal to the duration of the segment plus the duration of the playlist.
 
+@item hls_flags append_list
+Append new segments into the end of old segment list,
+and remove the @code{#EXT-X-ENDLIST} from the old segment list.
+
+@item hls_flags round_durations
+Round the duration info in the playlist file segment info to integer
+values, instead of using floating point.
+
+@item hls_flags discont_starts
+Add the @code{#EXT-X-DISCONTINUITY} tag to the playlist, before the
+first segment's information.
+
+@item hls_flags omit_endlist
+Do not append the @code{EXT-X-ENDLIST} tag at the end of the playlist.
+
+@item hls_flags split_by_time
+Allow segments to start on frames other than keyframes. This improves
+behavior on some players when the time between keyframes is inconsistent,
+but may make things worse on others, and can cause some oddities during
+seeking. This flag should be used with the @code{hls_time} option.
+
 @item hls_playlist_type event
 Emit @code{#EXT-X-PLAYLIST-TYPE:EVENT} in the m3u8 header. Forces
 @option{hls_list_size} to 0; the playlist can only be appended to.
@@ -501,6 +529,17 @@ Emit @code{#EXT-X-PLAYLIST-TYPE:EVENT} in the m3u8 header. Forces
 @item hls_playlist_type vod
 Emit @code{#EXT-X-PLAYLIST-TYPE:VOD} in the m3u8 header. Forces
 @option{hls_list_size} to 0; the playlist must not change.
+
+@item method
+Use the given HTTP method to create the hls files.
+@example
+ffmpeg -re -i in.ts -f hls -method PUT http://example.com/live/out.m3u8
+@end example
+This example will upload all the mpegts segment files to the HTTP
+server using the HTTP PUT method, and update the m3u8 files every
+@code{refresh} times using the same method.
+Note that the HTTP server must support the given method for uploading
+files.
 @end table
 
 @anchor{ico}
@@ -907,41 +946,41 @@ and @code{service_name}. If they are not set the default for
 The muxer options are:
 
 @table @option
-@item -mpegts_original_network_id @var{number}
+@item mpegts_original_network_id @var{number}
 Set the original_network_id (default 0x0001). This is unique identifier
 of a network in DVB. Its main use is in the unique identification of a
 service through the path Original_Network_ID, Transport_Stream_ID.
-@item -mpegts_transport_stream_id @var{number}
+@item mpegts_transport_stream_id @var{number}
 Set the transport_stream_id (default 0x0001). This identifies a
 transponder in DVB.
-@item -mpegts_service_id @var{number}
+@item mpegts_service_id @var{number}
 Set the service_id (default 0x0001) also known as program in DVB.
-@item -mpegts_service_type @var{number}
+@item mpegts_service_type @var{number}
 Set the program service_type (default @var{digital_tv}), see below
 a list of pre defined values.
-@item -mpegts_pmt_start_pid @var{number}
+@item mpegts_pmt_start_pid @var{number}
 Set the first PID for PMT (default 0x1000, max 0x1f00).
-@item -mpegts_start_pid @var{number}
+@item mpegts_start_pid @var{number}
 Set the first PID for data packets (default 0x0100, max 0x0f00).
-@item -mpegts_m2ts_mode @var{number}
+@item mpegts_m2ts_mode @var{number}
 Enable m2ts mode if set to 1. Default value is -1 which disables m2ts mode.
-@item -muxrate @var{number}
+@item muxrate @var{number}
 Set a constant muxrate (default VBR).
-@item -pcr_period @var{numer}
+@item pcr_period @var{numer}
 Override the default PCR retransmission time (default 20ms), ignored
 if variable muxrate is selected.
 @item pat_period @var{number}
 Maximal time in seconds between PAT/PMT tables.
 @item sdt_period @var{number}
 Maximal time in seconds between SDT tables.
-@item -pes_payload_size @var{number}
+@item pes_payload_size @var{number}
 Set minimum PES packet payload in bytes.
-@item -mpegts_flags @var{flags}
+@item mpegts_flags @var{flags}
 Set flags (see below).
-@item -mpegts_copyts @var{number}
+@item mpegts_copyts @var{number}
 Preserve original timestamps, if value is set to 1. Default value is -1, which
 results in shifting timestamps so that they start from 0.
-@item -tables_version @var{number}
+@item tables_version @var{number}
 Set PAT, PMT and SDT version (default 0, valid values are from 0 to 31, inclusively).
 This option allows updating stream structure so that standard consumer may
 detect the change. To do so, reopen output AVFormatContext (in case of API
@@ -957,7 +996,7 @@ ffmpeg -i source2.ts -codec copy -f mpegts -tables_version 1 udp://1.1.1.1:1111
 @end example
 @end table
 
-Option mpegts_service_type accepts the following values:
+Option @option{mpegts_service_type} accepts the following values:
 
 @table @option
 @item hex_value
@@ -978,7 +1017,7 @@ Advanced Codec Digital SDTV service.
 Advanced Codec Digital HDTV service.
 @end table
 
-Option mpegts_flags may take a set of such flags:
+Option @option{mpegts_flags} may take a set of such flags:
 
 @table @option
 @item resend_headers
@@ -1407,6 +1446,101 @@ Specify whether to remove all fragments when finished. Default 0 (do not remove)
 
 @end table
 
+@section fifo
+
+The fifo pseudo-muxer allows the separation of encoding and muxing by using
+first-in-first-out queue and running the actual muxer in a separate thread. This
+is especially useful in combination with the @ref{tee} muxer and can be used to
+send data to several destinations with different reliability/writing speed/latency.
+
+API users should be aware that callback functions (interrupt_callback,
+io_open and io_close) used within its AVFormatContext must be thread-safe.
+
+The behavior of the fifo muxer if the queue fills up or if the output fails is
+selectable,
+
+@itemize @bullet
+
+@item
+output can be transparently restarted with configurable delay between retries
+based on real time or time of the processed stream.
+
+@item
+encoding can be blocked during temporary failure, or continue transparently
+dropping packets in case fifo queue fills up.
+
+@end itemize
+
+@table @option
+
+@item fifo_format
+Specify the format name. Useful if it cannot be guessed from the
+output name suffix.
+
+@item queue_size
+Specify size of the queue (number of packets). Default value is 60.
+
+@item format_opts
+Specify format options for the underlying muxer. Muxer options can be specified
+as a list of @var{key}=@var{value} pairs separated by ':'.
+
+@item drop_pkts_on_overflow @var{bool}
+If set to 1 (true), in case the fifo queue fills up, packets will be dropped
+rather than blocking the encoder. This allows to continue streaming without
+delaying the input, at the cost of ommiting part of the stream. By default
+this option is set to 0 (false), so in such cases the encoder will be blocked
+until the muxer processes some of the packets and none of them is lost.
+
+@item attempt_recovery @var{bool}
+If failure occurs, attempt to recover the output. This is especially useful
+when used with network output, allows to restart streaming transparently.
+By default this option is set to 0 (false).
+
+@item max_recovery_attempts
+Sets maximum number of successive unsuccessful recovery attempts after which
+the output fails permanently. By default this option is set to 0 (unlimited).
+
+@item recovery_wait_time @var{duration}
+Waiting time before the next recovery attempt after previous unsuccessful
+recovery attempt. Default value is 5 seconds.
+
+@item recovery_wait_streamtime @var{bool}
+If set to 0 (false), the real time is used when waiting for the recovery
+attempt (i.e. the recovery will be attempted after at least
+recovery_wait_time seconds).
+If set to 1 (true), the time of the processed stream is taken into account
+instead (i.e. the recovery will be attempted after at least @var{recovery_wait_time}
+seconds of the stream is omitted).
+By default, this option is set to 0 (false).
+
+@item recover_any_error @var{bool}
+If set to 1 (true), recovery will be attempted regardless of type of the error
+causing the failure. By default this option is set to 0 (false) and in case of
+certain (usually permanent) errors the recovery is not attempted even when
+@var{attempt_recovery} is set to 1.
+
+@item restart_with_keyframe @var{bool}
+Specify whether to wait for the keyframe after recovering from
+queue overflow or failure. This option is set to 0 (false) by default.
+
+@end table
+
+@subsection Examples
+
+@itemize
+
+@item
+Stream something to rtmp server, continue processing the stream at real-time
+rate even in case of temporary failure (network outage) and attempt to recover
+streaming every second indefinitely.
+@example
+ffmpeg -re -i ... -c:v libx264 -c:a aac -f fifo -fifo_format flv -map 0:v -map 0:a
+  -drop_pkts_on_overflow 1 -attempt_recovery 1 -recovery_wait_time 1 rtmp://example.com/live/stream_name
+@end example
+
+@end itemize
+
+@anchor{tee}
 @section tee
 
 The tee muxer can be used to write the same data to several files or any

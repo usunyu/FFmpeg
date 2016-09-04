@@ -278,7 +278,7 @@ static void filter(AVFilterContext *ctx, AVFrame *dstpic,
         td.h     = h;
         td.plane = i;
 
-        ctx->internal->execute(ctx, filter_slice, &td, NULL, FFMIN(h, ctx->graph->nb_threads));
+        ctx->internal->execute(ctx, filter_slice, &td, NULL, FFMIN(h, ff_filter_get_nb_threads(ctx)));
     }
     if (!bwdif->inter_field) {
         bwdif->inter_field = 1;
@@ -543,7 +543,7 @@ static const AVOption bwdif_options[] = {
     CONST("bff",  "assume bottom field first", BWDIF_PARITY_BFF,  "parity"),
     CONST("auto", "auto detect parity",        BWDIF_PARITY_AUTO, "parity"),
 
-    { "deint", "specify which frames to deinterlace", OFFSET(deint), AV_OPT_TYPE_INT, {.i64=BWDIF_DEINT_INTERLACED}, 0, 1, FLAGS, "deint" },
+    { "deint", "specify which frames to deinterlace", OFFSET(deint), AV_OPT_TYPE_INT, {.i64=BWDIF_DEINT_ALL}, 0, 1, FLAGS, "deint" },
     CONST("all",        "deinterlace all frames",                       BWDIF_DEINT_ALL,        "deint"),
     CONST("interlaced", "only deinterlace frames marked as interlaced", BWDIF_DEINT_INTERLACED, "deint"),
 

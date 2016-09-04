@@ -29,11 +29,8 @@
 #include "vc2enc_dwt.h"
 #include "diractab.h"
 
-/* Quantizations above this usually zero coefficients and lower the quality */
-#define MAX_QUANT_INDEX FF_ARRAY_ELEMS(ff_dirac_qscale_tab)
-
 /* Total range is -COEF_LUT_TAB to +COEFF_LUT_TAB, but total tab size is half
- * (COEF_LUT_TAB*MAX_QUANT_INDEX) since the sign is appended during encoding */
+ * (COEF_LUT_TAB*DIRAC_MAX_QUANT_INDEX), as the sign is appended during encoding */
 #define COEF_LUT_TAB 2048
 
 /* The limited size resolution of each slice forces us to do this */
@@ -109,7 +106,7 @@ typedef struct Plane {
 
 typedef struct SliceArgs {
     PutBitContext pb;
-    int cache[MAX_QUANT_INDEX];
+    int cache[DIRAC_MAX_QUANT_INDEX];
     void *ctx;
     int x;
     int y;
@@ -777,7 +774,10 @@ static int encode_hq_slice(AVCodecContext *avctx, void *arg)
     uint8_t quants[MAX_DWT_LEVELS][4];
     int p, level, orientation;
 
+    /* The reference decoder ignores it, and its typical length is 0 */
+    memset(put_bits_ptr(pb), 0, s->prefix_bytes);
     skip_put_bytes(pb, s->prefix_bytes);
+
     put_bits(pb, 8, quant_idx);
 
     /* Slice quantization (slice_quantizers() in the specs) */
@@ -809,6 +809,8 @@ static int encode_hq_slice(AVCodecContext *avctx, void *arg)
         }
         pb->buf[bytes_start] = pad_s;
         flush_put_bits(pb);
+        /* vc2-reference uses that padding that decodes to '0' coeffs */
+        memset(put_bits_ptr(pb), 0xFF, pad_c);
         skip_put_bytes(pb, pad_c);
     }
 
@@ -994,8 +996,9 @@ static av_cold int vc2_encode_frame(AVCodecContext *avctx, AVPacket *avpkt,
     int ret = 0;
     int sig_size = 256;
     VC2EncContext *s = avctx->priv_data;
-    const char aux_data[] = LIBAVCODEC_IDENT;
-    const int aux_data_size = sizeof(aux_data);
+    const int bitexact = avctx->flags & AV_CODEC_FLAG_BITEXACT;
+    const char *aux_data = bitexact ? "Lavc" : LIBAVCODEC_IDENT;
+    const int aux_data_size = bitexact ? sizeof("Lavc") : sizeof(LIBAVCODEC_IDENT);
     const int header_size = 100 + aux_data_size;
     int64_t max_frame_bytes, r_bitrate = avctx->bit_rate >> (s->interlaced);
 
@@ -1068,7 +1071,7 @@ static av_cold int vc2_encode_init(AVCodecContext *avctx)
     s->picture_number = 0;
 
     /* Total allowed quantization range */
-    s->q_ceil    = MAX_QUANT_INDEX;
+    s->q_ceil    = DIRAC_MAX_QUANT_INDEX;
 
     s->ver.major = 2;
     s->ver.minor = 0;
